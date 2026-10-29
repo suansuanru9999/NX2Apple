@@ -1116,7 +1116,7 @@ final class BuildModel: ObservableObject {
             }
         }
         var args = [repoPath + "/" + Self.buildScript, inputDir, "-k", keysPath,
-                    "--progress", "json"]
+                    "--progress", "json", "--allow-other-metal"]
         // A compatibility switch the player turned on: written to a small env file the pipeline
         // copies into the app bundle (main.m sets one variable per line at boot). Only for an IPA;
         // a Mac app runs on this Mac's GPU, which always has BC support.
