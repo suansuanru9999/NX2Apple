@@ -4,9 +4,11 @@
 // in UserDefaults; Reset to tested defaults shows the defaults, and Play then forgets them. DM_LAUNCHER=0 in Documents/env.txt starts the game at once with the saved choices; DM_SAVED_CHOICES=0 ignores them (and keeps them)
 import SwiftUI
 import UIKit
+import UniformTypeIdentifiers
 import os
 
 private func info(_ key: String) -> Any? { Bundle.main.object(forInfoDictionaryKey: key) }
+
 
 /// Where this game's data comes from, and a picker to change it.
 ///
@@ -39,7 +41,7 @@ private struct GameDataSection: View {
                  : note)
         }
         .sheet(isPresented: $picking) {
-            DocumentPicker { url in
+            DocumentPicker(types: [.item]) { url in
                 picking = false
                 if dm_store_picked_data(url) {
                     note = "Saved. The game uses this location when you press Play."
@@ -60,19 +62,71 @@ private struct GameDataSection: View {
         picked = dm_picked_data_path(&stale) ?? ""
         if stale.boolValue && picked.isEmpty {
             note = "The location you picked before is no longer readable (the app was signed differently). Please choose it again."
+        } else if note.isEmpty, let old = dm_old_archive_message() {
+            note = String(cString: old)
         }
     }
 }
 
-/// UIDocumentPickerViewController for files and folders, in the two callbacks a SwiftUI sheet wants.
+/// Cloud saves: an iCloud Drive folder shared with the Mac app (chosen in its settings window's
+/// Cloud saves too). The host brings the save in from there when the game starts and
+/// sends it there after each save (dm/host/save_sync.h); the folder is a bookmark (CloudSaves.m).
+private struct CloudSavesSection: View {
+    @State private var folder: String = ""
+    @State private var note: String = ""
+    @State private var picking = false
+
+    var body: some View {
+        Section {
+            HStack {
+                Text("Cloud saves")
+                Spacer()
+                Text(folder.isEmpty ? "Off" : (folder as NSString).lastPathComponent)
+                    .foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+            }
+            Button(folder.isEmpty ? "Choose a folder in iCloud Drive…" : "Choose a different folder…") { picking = true }
+            if !folder.isEmpty {
+                Button("Turn off cloud saves", role: .destructive) {
+                    dm_clear_cloud_saves(); refresh(); note = ""
+                }
+            }
+        } footer: {
+            Text(note.isEmpty
+                 ? "Choose a folder in iCloud Drive, and the same one in the Mac app's Cloud saves. The save comes in when the game starts and goes out after each save; a save that is replaced is kept in save-backups."
+                 : note)
+        }
+        .sheet(isPresented: $picking) {
+            DocumentPicker(types: [.folder]) { url in
+                picking = false
+                if dm_store_cloud_saves(url) {
+                    note = "Saved. The game uses this folder when you press Play."
+                    refresh()
+                } else {
+                    note = "That folder could not be remembered — try a different one."
+                }
+            } onCancel: { picking = false }
+        }
+        .onAppear(perform: refresh)
+    }
+
+    private func refresh() {
+        var stale: ObjCBool = false
+        folder = dm_cloud_saves_path(&stale) ?? ""
+        if stale.boolValue && folder.isEmpty {
+            note = "The folder you chose before is no longer readable (the app was signed differently). Please choose it again."
+        }
+    }
+}
+
+/// UIDocumentPickerViewController for files or folders (`types`), in the two callbacks a SwiftUI sheet wants.
 private struct DocumentPicker: UIViewControllerRepresentable {
+    var types: [UTType] = [.folder]
     let onPick: (URL) -> Void
     let onCancel: () -> Void
 
     func makeUIViewController(context: Context) -> UIDocumentPickerViewController {
-        // .open (not .import): the file stays where it is and the bookmark keeps pointing at it,
-        // which is the whole point — an import would copy 16 GB into the app's container.
-        let picker = UIDocumentPickerViewController(forOpeningContentTypes: [.item], asCopy: false)
+        // .open (not .import): the file or folder stays where it is and the bookmark keeps pointing at it (an import would copy 16 GB of game data into the app's container).
+        let picker = UIDocumentPickerViewController(forOpeningContentTypes: types, asCopy: false)
         picker.allowsMultipleSelection = false
         picker.delegate = context.coordinator
         return picker
@@ -133,6 +187,7 @@ private struct LauncherView: View {
                         Text("Brings back all settings this game was tested with.")
                     }
                     GameDataSection()
+                    CloudSavesSection()
                     Section {
                         HStack {
                             Text("Memory available")
